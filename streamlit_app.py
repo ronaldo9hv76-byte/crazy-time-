@@ -1,15 +1,12 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
 import time
 from collections import Counter
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.core.os_manager import ChromeType
 
-# --- LOGICA MATEMATICA ---
+# --- CONFIGURAZIONE MATEMATICA ---
 SEGMENTS = ['1', '2', '5', '10', 'Coin Flip', 'Pachinko', 'Cash Hunt', 'Crazy Time']
 THEORETICAL_PROBS = {'1': 21/54, '2': 13/54, '5': 7/54, '10': 4/54, 'Coin Flip': 4/54, 'Pachinko': 2/54, 'Cash Hunt': 2/54, 'Crazy Time': 1/54}
 
@@ -29,63 +26,85 @@ def calculate_stats(history):
     entropy = -sum(p * np.log2(p) for p in probs if p > 0)
     return z_scores, entropy
 
-@st.cache_resource
-def get_driver():
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1")
-    # Usa il driver di sistema installato via packages.txt
-    service = Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install())
-    return webdriver.Chrome(service=service, options=options)
+def fetch_data(url):
+    # Header Safari iPhone avanzato
+    headers = {
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "it-IT,it;q=0.9"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        if response.status_code != 200:
+            return f"Errore Server: {response.status_code}"
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Cerchiamo i dati in modo più ampio: span, div, td che contengono i nomi dei bonus
+        elements = soup.find_all(['span', 'div', 'td'])
+        history = []
+        for el in elements:
+            txt = el.get_text().strip()
+            if txt in SEGMENTS:
+                history.append(txt)
+        
+        # Rimuoviamo i duplicati consecutivi dovuti a sovrapposizioni HTML
+        clean_history = []
+        for i in range(len(history)):
+            if i == 0 or history[i] != history[i-1]:
+                clean_history.append(history[i])
+                
+        return clean_history[:100]
+    except Exception as e:
+        return f"Errore Connessione: {str(e)}"
 
-# --- UI ---
-st.set_page_config(page_title="Crazy Math Pro", layout="wide")
-st.title("📊 Crazy Time Markovian Predictor")
+# --- INTERFACCIA ---
+st.set_page_config(page_title="Crazy Math Safari", layout="wide")
+st.title("🎡 Crazy Time: Analisi Matematica")
 
-if "history" not in st.session_state:
-    st.session_state.history = []
-
-url = st.sidebar.text_input("URL Stats", "https://www.casino.org/crazy-time/stats/")
-run = st.sidebar.button("▶️ Avvia Analisi", type="primary")
+# Sidebar con istruzioni
+st.sidebar.header("⚙️ Pannello Controllo")
+default_url = "https://www.casino.org/casinoscores/it/crazy-time/"
+url = st.sidebar.text_input("Inserisci URL Statistiche", default_url)
+run = st.sidebar.toggle("▶️ ATTIVA MONITORAGGIO") # Usiamo un toggle più stabile per Safari
 
 if run:
-    placeholder = st.empty()
-    try:
-        driver = get_driver()
-        while True:
-            driver.get(url)
-            time.sleep(5)
-            # Ricerca elementi più flessibile
-            elements = driver.find_elements("xpath", "//*[contains(text(), '1') or contains(text(), 'Pachinko')]")
-            history = [el.text.strip() for el in elements if el.text.strip() in SEGMENTS][:100]
+    status_box = st.empty()
+    display_box = st.empty()
+    
+    while run:
+        status_box.write("⏳ Recupero dati in corso...")
+        history = fetch_data(url)
+        
+        if isinstance(history, list) and len(history) > 2:
+            z_scores, entropy = calculate_stats(history)
+            matrix = get_markov_matrix(history)
+            last = history[0]
             
-            if history:
-                z_scores, entropy = calculate_stats(history)
-                matrix = get_markov_matrix(history)
-                last = history[0]
-                
-                # Predizione ibrida Markov + Bias
-                m_weights = matrix.loc[last].values
-                b_weights = np.array([max(0.01, THEORETICAL_PROBS[s] + z_scores[s]*0.02) for s in SEGMENTS])
-                weights = (m_weights * 0.7) + (b_weights * 0.3)
-                weights /= weights.sum()
-                preds = np.random.choice(SEGMENTS, size=30, p=weights)
+            # Predizione Markov + Bias
+            m_weights = matrix.loc[last].values
+            b_weights = np.array([max(0.01, THEORETICAL_PROBS[s] + z_scores[s]*0.02) for s in SEGMENTS])
+            weights = (m_weights * 0.7) + (b_weights * 0.3)
+            weights /= weights.sum()
+            preds = np.random.choice(SEGMENTS, size=20, p=weights)
 
-                with placeholder.container():
-                    st.metric("Ultimo Uscito", last, delta=f"Entropia: {entropy:.2f}")
-                    st.success("➔ ".join(preds))
+            with display_box.container():
+                st.success(f"Dati letti correttamente! ({len(history)} giri analizzati)")
+                
+                m1, m2 = st.columns(2)
+                m1.metric("Ultimo Esito", last)
+                m2.metric("Entropia", f"{entropy:.2f}")
+
+                st.info("🎯 **PREVISIONE PROSSIMI GIRI:**\n\n" + " ➔ ".join([f"**{p}**" for p in preds]))
+                
+                with st.expander("Vedi Matrice di Probabilità"):
+                    st.dataframe(matrix.style.background_gradient(axis=1, cmap='Purples'))
                     
-                    c1, c2 = st.columns([2, 1])
-                    c1.write("Matrice di Transizione")
-                    c1.dataframe(matrix.style.background_gradient(axis=1))
-                    c2.write("Z-Score (Bias)")
-                    df_z = pd.DataFrame(z_scores.items(), columns=['S', 'Z']).set_index('S')
-                    c2.dataframe(df_z.style.background_gradient(cmap='RdYlGn'))
+                st.caption(f"Ultimo aggiornamento: {time.strftime('%H:%M:%S')}")
+                status_box.empty()
+        else:
+            status_box.error(f"⚠️ Attenzione: {history if isinstance(history, str) else 'Dati non trovati nella pagina. Prova a cambiare URL o attendi.'}")
             
-            time.sleep(60)
-            driver.refresh()
-    except Exception as e:
-        st.error(f"Errore durante l'esecuzione: {e}")
+        time.sleep(30) # Refresh ogni 30 secondi per essere più reattivi
+else:
+    st.write("Configura l'URL e attiva il monitoraggio dalla barra laterale per iniziare.")
