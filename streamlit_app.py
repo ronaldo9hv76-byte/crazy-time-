@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 import time
 from collections import Counter
 
-# --- CONFIGURAZIONE MATEMATICA ---
+# --- CONFIGURAZIONE ---
 SEGMENTS = ['1', '2', '5', '10', 'Coin Flip', 'Pachinko', 'Cash Hunt', 'Crazy Time']
 THEORETICAL_PROBS = {'1': 21/54, '2': 13/54, '5': 7/54, '10': 4/54, 'Coin Flip': 4/54, 'Pachinko': 2/54, 'Cash Hunt': 2/54, 'Crazy Time': 1/54}
 
@@ -27,84 +27,66 @@ def calculate_stats(history):
     return z_scores, entropy
 
 def fetch_data(url):
-    # Header Safari iPhone avanzato
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "it-IT,it;q=0.9"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     }
     try:
-        response = requests.get(url, headers=headers, timeout=20)
-        if response.status_code != 200:
-            return f"Errore Server: {response.status_code}"
+        # Tentativo di recupero
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        # Se riceviamo 403, comunichiamo il blocco
+        if response.status_code == 403:
+            return "Errore 403: Il sito blocca l'accesso automatico. Prova a usare l'URL di Tracksino o simili."
         
         soup = BeautifulSoup(response.text, 'html.parser')
+        # Cerchiamo i nomi dei segmenti in span o div con classi comuni
+        tags = soup.find_all(['span', 'div', 'p'])
+        history = [t.get_text().strip() for t in tags if t.get_text().strip() in SEGMENTS]
         
-        # Cerchiamo i dati in modo più ampio: span, div, td che contengono i nomi dei bonus
-        elements = soup.find_all(['span', 'div', 'td'])
-        history = []
-        for el in elements:
-            txt = el.get_text().strip()
-            if txt in SEGMENTS:
-                history.append(txt)
-        
-        # Rimuoviamo i duplicati consecutivi dovuti a sovrapposizioni HTML
-        clean_history = []
-        for i in range(len(history)):
-            if i == 0 or history[i] != history[i-1]:
-                clean_history.append(history[i])
-                
-        return clean_history[:100]
+        # Pulizia duplicati tecnici
+        clean_h = []
+        for i, val in enumerate(history):
+            if i == 0 or val != history[i-1]:
+                clean_h.append(val)
+        return clean_h[:100]
     except Exception as e:
-        return f"Errore Connessione: {str(e)}"
+        return f"Errore: {str(e)}"
 
-# --- INTERFACCIA ---
-st.set_page_config(page_title="Crazy Math Safari", layout="wide")
-st.title("🎡 Crazy Time: Analisi Matematica")
+# --- UI ---
+st.set_page_config(page_title="Crazy Math Mobile", layout="wide")
+st.title("🎡 Crazy Time Tracker")
 
-# Sidebar con istruzioni
-st.sidebar.header("⚙️ Pannello Controllo")
-default_url = "https://www.casino.org/casinoscores/it/crazy-time/"
-url = st.sidebar.text_input("Inserisci URL Statistiche", default_url)
-run = st.sidebar.toggle("▶️ ATTIVA MONITORAGGIO") # Usiamo un toggle più stabile per Safari
+st.sidebar.header("Impostazioni")
+# Cambiamo l'URL di default con uno potenzialmente meno protetto o suggeriamo l'alternativa
+url_input = st.sidebar.text_input("URL Statistiche", "https://www.trackcasinos.com/crazy-time-stats/")
+run = st.sidebar.toggle("Avvia Analisi")
 
 if run:
-    status_box = st.empty()
-    display_box = st.empty()
-    
+    container = st.empty()
     while run:
-        status_box.write("⏳ Recupero dati in corso...")
-        history = fetch_data(url)
+        history = fetch_data(url_input)
         
-        if isinstance(history, list) and len(history) > 2:
+        if isinstance(history, list) and len(history) > 5:
             z_scores, entropy = calculate_stats(history)
             matrix = get_markov_matrix(history)
             last = history[0]
             
-            # Predizione Markov + Bias
-            m_weights = matrix.loc[last].values
-            b_weights = np.array([max(0.01, THEORETICAL_PROBS[s] + z_scores[s]*0.02) for s in SEGMENTS])
-            weights = (m_weights * 0.7) + (b_weights * 0.3)
-            weights /= weights.sum()
-            preds = np.random.choice(SEGMENTS, size=20, p=weights)
+            # Predizione
+            m_w = matrix.loc[last].values
+            b_w = np.array([max(0.01, THEORETICAL_PROBS[s] + z_scores[s]*0.02) for s in SEGMENTS])
+            final_w = (m_w * 0.7) + (b_w * 0.3)
+            final_w /= final_w.sum()
+            preds = np.random.choice(SEGMENTS, size=15, p=final_w)
 
-            with display_box.container():
-                st.success(f"Dati letti correttamente! ({len(history)} giri analizzati)")
-                
-                m1, m2 = st.columns(2)
-                m1.metric("Ultimo Esito", last)
-                m2.metric("Entropia", f"{entropy:.2f}")
-
-                st.info("🎯 **PREVISIONE PROSSIMI GIRI:**\n\n" + " ➔ ".join([f"**{p}**" for p in preds]))
-                
-                with st.expander("Vedi Matrice di Probabilità"):
-                    st.dataframe(matrix.style.background_gradient(axis=1, cmap='Purples'))
-                    
-                st.caption(f"Ultimo aggiornamento: {time.strftime('%H:%M:%S')}")
-                status_box.empty()
+            with container.container():
+                st.metric("Ultimo Esito", last, f"Entropia: {entropy:.2f}")
+                st.success("➔ ".join(preds))
+                st.write("**Matrice di Probabilità Condizionata**")
+                st.dataframe(matrix.style.background_gradient(axis=1, cmap='Blues'))
+                st.caption(f"Aggiornato: {time.strftime('%H:%M:%S')}")
         else:
-            status_box.error(f"⚠️ Attenzione: {history if isinstance(history, str) else 'Dati non trovati nella pagina. Prova a cambiare URL o attendi.'}")
-            
-        time.sleep(30) # Refresh ogni 30 secondi per essere più reattivi
-else:
-    st.write("Configura l'URL e attiva il monitoraggio dalla barra laterale per iniziare.")
+            st.error(f"Impossibile leggere i dati: {history}")
+            st.info("Suggerimento: Il sito inserito potrebbe avere protezioni anti-bot. Prova a cercare un sito di stats 'Crazy Time Live' meno noto o più semplice.")
+            break
+        time.sleep(45)
