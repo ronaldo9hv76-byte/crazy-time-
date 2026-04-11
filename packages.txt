@@ -1,4 +1,0 @@
-zlib1g-dev
-libjpeg-dev
-chromium
-chromium-driver
