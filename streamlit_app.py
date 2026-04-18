@@ -379,3 +379,4 @@ if st.session_state.history:
         urg = sfas_b / exp_b
         icon = "ATTACCO" if urg > 1.8 else ("MONITOR" if urg > 1.0 else "ATTESA")
         st.sidebar.write(f"{icon} | {bonus}: {sfas_b}/{exp_b} ({urg:.1f}x)")
+        
