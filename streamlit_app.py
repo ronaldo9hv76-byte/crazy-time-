@@ -152,7 +152,7 @@ def get_micro_sfasamento(h, window=15):
     return result
 
 # INTERFACCIA
-st.title("CT Oracle Pro v2 - Markov + Settore + Pattern + Chi2")
+st.title("🎯 CT Oracle Pro v2 - Markov + Settore + Pattern + Chi2")
 
 # TOP BAR
 t1, t2, t3, t4, t5 = st.columns(5)
@@ -171,7 +171,7 @@ if chi2 is not None:
 st.markdown("---")
 
 # TASTIERA INPUT
-st.write("### Inserimento Rapido")
+st.write("### ⌨️ Inserimento Rapido")
 cols_btn = st.columns(8)
 for idx, seg in enumerate(SEGMENTS):
     if cols_btn[idx].button(seg, use_container_width=True, key=f"btn_{seg}"):
@@ -210,7 +210,7 @@ if len(st.session_state.history) > 5:
 
     # COL 1: STATO MOTORE
     with col1:
-        st.subheader("Stato Motore")
+        st.subheader("📡 Stato Motore")
         st.metric("Ultimo", last)
         st.metric("Entropia Recente (15 giri)", f"{ent_recent:.2f}")
 
@@ -227,13 +227,13 @@ if len(st.session_state.history) > 5:
             st.warning(f"Possibile Bias (chi2={chi2:.1f})")
 
         if hot:
-            st.write("HOT:", ", ".join(hot.keys()))
+            st.write("🔥 HOT:", ", ".join(hot.keys()))
         if cold:
-            st.write("COLD (dovuti):", ", ".join(cold.keys()))
+            st.write("❄️ COLD (dovuti):", ", ".join(cold.keys()))
 
     # COL 2: MARKOV + SCORE COMPOSITO
     with col2:
-        st.subheader("Markov Pesato + Score")
+        st.subheader("🔮 Markov Pesato + Score")
         preds = markov.loc[last].sort_values(ascending=False).head(4)
         markov_fav = preds.index[0] if not preds.empty and preds.iloc[0] > 0 else None
 
@@ -242,7 +242,7 @@ if len(st.session_state.history) > 5:
                 continue
             score = get_composite_score(h, val, prob)
             trend = get_trend(h, val)
-            t_arrow = "SU" if trend > 0.2 else ("GIU" if trend < -0.2 else "STABILE")
+            t_arrow = "⤴️ SU" if trend > 0.2 else ("⤵️ GIU" if trend < -0.2 else "➡️ STABILE")
             dot = "[FORTE]" if score > 0.55 else ("[MED]" if score > 0.35 else "[DEBOLE]")
             msfas = micro_sfas.get(val, 0)
 
@@ -254,7 +254,7 @@ if len(st.session_state.history) > 5:
 
     # COL 3: RADAR BONUS
     with col3:
-        st.subheader("Radar Bonus - Urgenza")
+        st.subheader("🚀 Radar Bonus - Urgenza")
 
         bonus_data = []
         for bonus in BONUS_LIST:
@@ -282,7 +282,7 @@ if len(st.session_state.history) > 5:
                 sfas_tb = get_sfasamento(h, tb)
                 exp_tb = round(1 / EXPECTED_FREQ[tb])
                 if sfas_tb > exp_tb * 1.2:
-                    st.error(f"ATTACCO: **{tb}** (Gap: {sfas_tb})")
+                    st.error(f"🔥 ATTACCO SETTORE: **{tb}** (Gap: {sfas_tb})")
                 else:
                     st.info(f"Monitor: {tb} (Gap: {sfas_tb})")
 
@@ -291,10 +291,10 @@ if len(st.session_state.history) > 5:
     # PATTERN DETECTOR
     pattern_pred = detect_pattern(h, length=3)
     if pattern_pred:
-        st.info(f"PATTERN DETECTOR: Sequenza recente già apparsa. Successivo previsto: **{pattern_pred}**")
+        st.info(f"🕵️ PATTERN DETECTOR: Sequenza recente già apparsa. Successivo previsto: **{pattern_pred}**")
 
     # FREQUENZE vs ATTESO
-    with st.expander("Frequenze Osservate vs Attese (click per aprire)"):
+    with st.expander("📊 Frequenze Osservate vs Attese (click per aprire)"):
         freq_rows = []
         counts_all = Counter(h)
         n_all = len(h)
@@ -318,25 +318,25 @@ if len(st.session_state.history) > 5:
         st.dataframe(pd.DataFrame(freq_rows), use_container_width=True, hide_index=True)
 
     # TATTICA AUTOMATICA
-    st.subheader("Manuale di Giocata - Tattica Automatica")
+    st.subheader("📋 Manuale di Giocata - Tattica Automatica")
     top_bonus, top_sfas, top_urgency, top_score = bonus_data[0]
 
     if current_rtp < 89 and ent_recent < 1.9 and top_urgency > 1.2:
-        st.success(f"ATTACCO AL SETTORE | Markov: **{markov_fav}** | Bonus urgente: **{top_bonus}** (Gap {top_sfas}, urgenza {top_urgency:.1f}x) | Copri il numero + bonus correlati.")
+        st.success(f"PIANO: ATTACCO AL SETTORE | Markov: **{markov_fav}** | Bonus urgente: **{top_bonus}** (Gap {top_sfas}) | Copri il numero + bonus correlati.")
     elif current_rtp > 115:
-        st.error("RECUPERO BANCO | RTP critico. Banca in vantaggio: gioca solo 1-2 per stabilizzare.")
+        st.error("PIANO: RECUPERO BANCO | RTP critico. Banca in vantaggio: gioca solo 1-2 per stabilizzare.")
     elif top_urgency > 2.0:
-        st.warning(f"BONUS IN PRESSIONE | **{top_bonus}** a {top_sfas} giri dal previsto {round(1/EXPECTED_FREQ[top_bonus])}. Considera copertura selettiva.")
+        st.warning(f"PIANO: BONUS IN PRESSIONE | **{top_bonus}** a {top_sfas} giri. Considera copertura selettiva.")
     elif ent_recent > 2.5:
-        st.error("MOTORE CAOTICO | Non entrare. Attendi entropia < 2.0.")
+        st.error("PIANO: MOTORE CAOTICO | Non entrare. Attendi entropia < 2.0.")
     else:
-        st.info(f"ATTESA STATISTICA | Sfasamento generale: {sfas_gen}. Entra quando sfasamento > 10 e urgenza bonus > 1.2.")
+        st.info(f"PIANO: ATTESA STATISTICA | Sfasamento generale: {sfas_gen}. Entra quando sfasamento > 10 e urgenza bonus > 1.2.")
 
     # PROFILO DEALER
     if len(st.session_state.dealer_history) >= 10:
         dh = st.session_state.dealer_history
         _, _, ent_dealer = get_analysis_weighted(dh)
-        with st.expander("Profilo Dealer Corrente"):
+        with st.expander("👤 Profilo Dealer Corrente"):
             st.write(f"Giri dealer: **{st.session_state.dealer_spins}**")
             st.write(f"Entropia dealer: **{ent_dealer:.2f}**")
             dc = Counter(dh)
@@ -346,10 +346,11 @@ if len(st.session_state.history) > 5:
             ])
             st.dataframe(dealer_df, use_container_width=True, hide_index=True)
 
-# SIDEBAR
-st.sidebar.header("Controlli")
+# SIDEBAR CONTROLLI
+st.sidebar.header("🛠️ Controlli")
 
-if st.sidebar.button("Cancella Ultimo"):
+# Tasto Annulla Ultimo Numero
+if st.sidebar.button("⏪ Cancella Ultimo"):
     if st.session_state.history:
         st.session_state.history.pop(0)
         st.session_state.total_spins = max(0, st.session_state.total_spins - 1)
@@ -358,25 +359,28 @@ if st.sidebar.button("Cancella Ultimo"):
         st.session_state.dealer_spins = max(0, st.session_state.dealer_spins - 1)
     st.rerun()
 
-if st.sidebar.button("Cambio Dealer"):
+# Tasto Cambio Dealer
+if st.sidebar.button("👤 Cambio Dealer"):
     st.session_state.dealer_spins = 0
     st.session_state.dealer_history = []
+    st.sidebar.success("Dealer resettato!")
     st.rerun()
 
-if st.sidebar.button("Reset Totale"):
-    st.session_state.history.clear()
-    st.session_state.dealer_history.clear()
+# Tasto Reset Totale
+if st.sidebar.button("🗑️ Reset Totale"):
+    st.session_state.history = []
+    st.session_state.dealer_history = []
     st.session_state.total_spins = 0
     st.session_state.dealer_spins = 0
     st.rerun()
 
+# Riepilogo Gap Bonus in Sidebar
 if st.session_state.history:
     st.sidebar.markdown("---")
-    st.sidebar.write("**Gap Bonus:**")
+    st.sidebar.write("**📈 Gap Bonus Live:**")
     for bonus in BONUS_LIST:
         sfas_b = get_sfasamento(st.session_state.history, bonus)
         exp_b = round(1 / EXPECTED_FREQ[bonus])
         urg = sfas_b / exp_b
-        icon = "ATTACCO" if urg > 1.8 else ("MONITOR" if urg > 1.0 else "ATTESA")
-        st.sidebar.write(f"{icon} | {bonus}: {sfas_b}/{exp_b} ({urg:.1f}x)")
-        
+        color = "🔴" if urg > 1.8 else ("🟡" if urg > 1.0 else "🟢")
+        st.sidebar.write(f"{color} {bonus}: {sfas_b}/{exp_b}")
