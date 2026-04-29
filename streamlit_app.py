@@ -3,11 +3,12 @@ import numpy as np
 import pandas as pd
 from collections import Counter
 import math
+import random
 
 # --- CONFIGURAZIONE PROFESSIONALE ---
-st.set_page_config(page_title='Roulette Oracle Pro v4', layout='wide')
+st.set_page_config(page_title='Oracle Pro v5 - Hybrid Engine', layout='wide', initial_sidebar_state="expanded")
 
-# Database Ruota Europea e Settori
+# --- DATABASE RUOTA EUROPEA E SETTORI ---
 WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
 RED_NUMS = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
 SECTORS = {
@@ -18,83 +19,90 @@ SECTORS = {
 }
 EXPECTED_FREQ = {'Voisins': 17/37, 'Tiers': 12/37, 'Orphelins': 8/37, 'Zero': 7/37}
 
+# Generiamo 37 Micro-Cluster di 5 numeri per attacco di precisione
+MICRO_CLUSTERS = {}
+for i, n in enumerate(WHEEL):
+    cluster = [WHEEL[(i-2)%37], WHEEL[(i-1)%37], n, WHEEL[(i+1)%37], WHEEL[(i+2)%37]]
+    MICRO_CLUSTERS[n] = cluster
+
 # --- STATO DELLA SESSIONE ---
-for key, default in [('history', []), ('total_spins', 0), ('dealer_spins', 0), ('dealer_history', []), ('distances', [])]:
+session_vars = [
+    ('history', []), ('total_spins', 0), ('dealer_spins', 0), 
+    ('distances', []), ('bankroll', 1000), ('base_unit', 1)
+]
+for key, default in session_vars:
     if key not in st.session_state: 
         st.session_state[key] = default
 
-# --- MOTORE MATEMATICO ---
+# --- MOTORE MATEMATICO IBRIDO ---
+
 def get_sfasamento(h, target_list):
     for i, val in enumerate(h):
         if val in target_list: return i     
     return len(h)
 
-def get_analysis_weighted(h):
-    # Matrice di Markov pesata con decadimento esponenziale
-    n = len(h)
+def calculate_rsi(binary_hist, period=14):
+    if len(binary_hist) < period: return 50.0
+    gains = sum(binary_hist[:period])
+    rs = (gains / period) / ((period - gains) / period) if (period - gains) != 0 else 999
+    return 100 - (100 / (1 + rs))
+
+def get_advanced_analysis(h):
+    # 1. Analisi Markoviana Settori Classici
     matrix = pd.DataFrame(0.0, index=SECTORS.keys(), columns=SECTORS.keys())
     sec_h = [next((s for s, nums in SECTORS.items() if x in nums), 'Voisins') for x in h]
     for i in range(len(sec_h)-1, 0, -1):
-        age = len(sec_h) - 1 - i
-        weight = math.exp(-0.07 * age)
+        weight = math.exp(-0.07 * (len(sec_h) - 1 - i))
         matrix.loc[sec_h[i], sec_h[i-1]] += weight
     m_norm = matrix.div(matrix.sum(axis=1).replace(0, 1), axis=0)
-    
-    def entropy(data):
-        if not data: return 0.0
-        c = Counter(data)
-        probs = [v / len(data) for v in c.values()]
-        return -sum(p * math.log2(p) for p in probs if p > 0)
-    
-    return m_norm, entropy(sec_h), entropy(sec_h[:15])
+
+    # 2. Ricerca Micro-Cluster Dominante (Edge detection)
+    best_cluster = None
+    max_edge = 0
+    for center, nums in MICRO_CLUSTERS.items():
+        binary = [1 if x in nums else 0 for x in h[:20]]
+        prob = sum([v * math.exp(-0.1 * i) for i, v in enumerate(binary)]) / sum([math.exp(-0.1 * i) for i in range(20)])
+        rsi = calculate_rsi([1 if x in nums else 0 for x in h])
+        if rsi > 70: prob *= 1.15 # Momentum
+        if prob > max_edge:
+            max_edge = prob
+            best_cluster = center
+            
+    return m_norm, best_cluster, max_edge
 
 def get_parity_bias(h):
-    if not h: return "N/A", 0.5
     recent = ["Pari" if (x % 2 == 0 and x != 0) else "Dispari" for x in h[:20] if x != 0]
     if not recent: return "N/A", 0.5
     counts = Counter(recent)
     fav = counts.most_common(1)[0]
     return fav[0], fav[1] / len(recent)
 
-def get_chi_square(h):
-    # Test statistico per Bias della ruota
-    if len(h) < 15: return None
-    counts = Counter([next((s for s, nums in SECTORS.items() if x in nums), 'Voisins') for x in h])
-    return sum(((counts.get(s, 0) - EXPECTED_FREQ[s]*len(h))**2 / (EXPECTED_FREQ[s]*len(h)) for s in SECTORS))
+def kelly_bet(win_prob, bankroll, base_unit):
+    b = 6.2 # Quota netta per 5 numeri (31/5)
+    if win_prob <= (5/37): return 0
+    kf = ((win_prob * b) - (1 - win_prob)) / b
+    return max(0, round((bankroll * (kf / 2)) / (base_unit * 5))) * 5
 
-def get_composite_score(h, sector, markov_prob, parity_match):
-    # Algoritmo di punteggio composito
-    sfas = get_sfasamento(h, SECTORS[sector])
-    exp_gap = 1 / EXPECTED_FREQ[sector]
-    sfas_score = min(sfas / exp_gap, 2.0) / 2.0
-    parity_bonus = 0.15 if parity_match else 0.0
-    return (0.40 * markov_prob + 0.35 * sfas_score + 0.10 * parity_bonus)
-
-# --- INTERFACCIA UTENTE ---
-st.title(' Roulette Oracle Pro v4')
+# --- INTERFACCIA ---
+st.title(' Oracle Hybrid Pro v5')
 
 # Telemetria Superiore
-c1, c2, c3, c4, c5 = st.columns([2,1,1,1,1])
-current_rtp = c1.number_input('RTP Live (%)', value=97.3, step=0.1)
-c2.metric('Giri Tot.', st.session_state.total_spins)
-c3.metric('Giri Dealer', st.session_state.dealer_spins)
-chi2_val = get_chi_square(st.session_state.history)
-if chi2_val: 
-    c5.metric('Chi2 Bias', f'{chi2_val:.1f}', delta='BIAS' if chi2_val > 7.8 else 'OK')
+c_t1, c_t2, c_t3, c_t4 = st.columns(4)
+st.session_state.bankroll = c_t1.number_input("Bankroll", value=st.session_state.bankroll)
+c_t2.metric("Giri Totali", st.session_state.total_spins)
+c_t3.metric("Trend Parità", get_parity_bias(st.session_state.history)[0])
+c_t4.metric("Unità Base", f"{st.session_state.base_unit}€")
 
-# Tastiera Numerica
-st.write('### Inserisci Risultato')
-cols_btn = st.columns(12)
+# Inserimento Numeri
+st.markdown("### 🎲 Inserimento Risultati")
+cols = st.columns(12)
 for i in range(1, 37):
-    with cols_btn[(i-1)%12]:
-        if st.button(str(i), key=f'btn{i}', use_container_width=True):
+    with cols[(i-1)%12]:
+        if st.button(str(i), key=f'n{i}', use_container_width=True):
             if st.session_state.history:
-                d = abs(WHEEL.index(st.session_state.history[0]) - WHEEL.index(i))
-                st.session_state.distances.insert(0, d)
+                st.session_state.distances.insert(0, abs(WHEEL.index(st.session_state.history[0]) - WHEEL.index(i)))
             st.session_state.history.insert(0, i)
-            st.session_state.dealer_history.insert(0, i)
             st.session_state.total_spins += 1
-            st.session_state.dealer_spins += 1
             st.rerun()
 
 if st.button('0 - ZERO', use_container_width=True, type='primary'):
@@ -102,68 +110,67 @@ if st.button('0 - ZERO', use_container_width=True, type='primary'):
     st.session_state.total_spins += 1
     st.rerun()
 
-# Cronologia Visiva
-if st.session_state.history:
-    st.markdown('---')
-    h_cols = st.columns(min(len(st.session_state.history), 20))
-    for col, val in zip(h_cols, st.session_state.history[:20]):
-        bg = '#c0392b' if val in RED_NUMS else ('#27ae60' if val == 0 else '#2c3e50')
-        col.markdown(f'<div style="background:{bg}; color:white; border-radius:5px; text-align:center; padding:5px; font-weight:bold;">{val}</div>', unsafe_allow_html=True)
-
-# LOGICA DI DECISIONE
-if len(st.session_state.history) > 5:
+# --- ANALISI E ATTACCO ---
+if len(st.session_state.history) > 10:
     h = st.session_state.history
-    markov, ent_total, ent_recent = get_analysis_weighted(h)
+    markov, b_cluster, edge = get_advanced_analysis(h)
     last_sec = next((s for s, nums in SECTORS.items() if h[0] in nums), 'Voisins')
-    p_trend, p_strength = get_parity_bias(h)
     
-    best_sector = None
-    max_score = -1
-    for sec in SECTORS.keys():
-        prob = markov.loc[last_sec].get(sec, 0)
-        sec_nums = SECTORS[sec]
-        parity_match = any((n % 2 == 0) if p_trend == "Pari" else (n % 2 != 0) for n in sec_nums)
-        score = get_composite_score(h, sec, prob, parity_match)
-        if score > max_score:
-            max_score = score
-            best_sector = sec
+    st.markdown("---")
+    st.markdown("## 🎯 STRATEGIA DI ATTACCO")
+    
+    col_l, col_r = st.columns([2, 1])
+    
+    with col_l:
+        bet_size = kelly_bet(edge, st.session_state.bankroll, st.session_state.base_unit)
+        if bet_size > 0 and edge > 0.18:
+            nums = MICRO_CLUSTERS[b_cluster]
+            st.markdown(f"""
+                <div style="background:#065f46; padding:25px; border-radius:15px; border:2px solid #10b981; text-align:center;">
+                    <h1 style="color:white; margin:0;">PUNTA: {bet_size} PEZZI</h1>
+                    <h2 style="color:#a7f3d0;">Micro-Cluster {b_cluster} e vicini</h2>
+                    <p style="font-size:24px; color:white; font-weight:bold;">{nums}</p>
+                    <p style="color:#d1fae5;">Edge Calcolato: {edge:.1%} | Strategia: Kelly Optimized</p>
+                </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.warning("⚠️ ATTENDERE: Vantaggio statistico insufficiente per un attacco sicuro.")
 
-    # Box Decisione
-    st.markdown('## PROSSIMA PUNTATA')
-    if ent_recent > 2.2:
-        st.error(f"ATTENDI: Entropia Alta ({ent_recent:.2f}). Sequenza caotica.")
-    else:
-        box_color = '#581c87' if max_score > 0.6 else '#1e3a5f'
-        azione = "ATTACCO" if max_score > 0.6 else "MONITORAGGIO"
-        st.markdown(f"""
-            <div style="background:{box_color}; padding:20px; border-radius:12px; border:2px solid #ffffff33;">
-                <h2 style="color:white; margin:0;">{azione}: {best_sector.upper()} </h2>
-                <p style="color:#ffffffcc; font-size:18px;">Trend Parità: <b> {p_trend} ({p_strength:.0%})</b>. 
-                Filtro applicato: Punta preferibilmente i {p_trend} di {best_sector}.</p>
-            </div>
-        """, unsafe_allow_html=True)
+    with col_r:
+        st.write("### 📊 Macro Settori")
+        st.dataframe(markov.loc[last_sec].sort_values(ascending=False).to_frame("% Prob").style.background_gradient(cmap='Greens'), use_container_width=True)
 
-    # Dettagli Analisi
-    sig1, sig2, sig3 = st.columns(3)
-    with sig1:
-        st.write("### Markov Sectors")
-        st.dataframe(markov.loc[last_sec].sort_values(ascending=False), use_container_width=True)
-    with sig2:
-        st.write("### Urgenza Settori")
+    # Dettagli Tecnici Inferiori
+    st.markdown("### 🔍 Telemetria Avanzata")
+    sd1, sd2, sd3 = st.columns(3)
+    with sd1:
+        st.write("**Dealer Signature**")
+        if st.session_state.distances:
+            common = Counter(st.session_state.distances[:10]).most_common(1)[0]
+            st.metric("Salto Dominante", f"+{common[0]}", f"{common[1]*10}% costanza")
+    with sd2:
+        st.write("**Urgenza Settori (Gap)**")
         for s in SECTORS:
             gap = get_sfasamento(h, SECTORS[s])
-            st.write(f"{s}: Gap {gap} (Atteso {round(1/EXPECTED_FREQ[s])})")
-    with sig3:
-        st.write("### Dealer Signature")
-        if st.session_state.distances:
-            common_dist = Counter(st.session_state.distances[:10]).most_common(1)[0]
-            st.metric("Salto Dominante", f"+{common_dist[0]}", f"{common_dist[1]*10}% costanza")
+            st.write(f"{s}: **{gap}** (Atteso {round(1/EXPECTED_FREQ[s])})")
+    with sd3:
+        st.write("**Analisi RSI**")
+        rsi_val = calculate_rsi([1 if x in SECTORS['Voisins'] else 0 for x in h])
+        st.progress(rsi_val/100, text=f"RSI Voisins: {rsi_val:.1f}")
 
-# SIDEBAR
-st.sidebar.header('Controlli Oracle')
-if st.sidebar.button('Cancella Ultimo'):
-    if st.session_state.history: st.session_state.history.pop(0); st.rerun()
-if st.sidebar.button('Cambio Dealer'):
-    st.session_state.dealer_spins = 0; st.session_state.dealer_history = []; st.rerun()
-if st.sidebar.button('Reset Totale'):
-    st.session_state.history = []; st.session_state.total_spins = 0; st.rerun()
+# Cronologia
+if st.session_state.history:
+    st.markdown("---")
+    h_display = st.columns(min(len(st.session_state.history), 20))
+    for col, val in zip(h_display, st.session_state.history[:20]):
+        bg = '#ef4444' if val in RED_NUMS else ('#10b981' if val == 0 else '#1f2937')
+        col.markdown(f'<div style="background:{bg}; color:white; border-radius:5px; text-align:center; padding:5px; font-weight:bold;">{val}</div>', unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("⚙️ System")
+    st.session_state.base_unit = st.number_input("Valore Pezzo (€)", value=st.session_state.base_unit)
+    if st.button("↩️ Cancella Ultimo"):
+        if st.session_state.history: st.session_state.history.pop(0); st.rerun()
+    if st.button("🗑️ Reset Sessione", type="primary"):
+        st.session_state.history = []; st.session_state.total_spins = 0; st.rerun()
