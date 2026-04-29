@@ -4,71 +4,63 @@ import pandas as pd
 from collections import Counter
 import math
 
-# --- CONFIGURAZIONE PAGINA APPLE STYLE ---
-st.set_page_config(page_title='CT Oracle Pro v4', layout='wide', initial_sidebar_state='expanded')
+# --- CONFIGURAZIONE ---
+st.set_page_config(page_title='Roulette Oracle Pro v1', layout='wide', initial_sidebar_state='expanded')
 
 st.markdown("""
     <style>
-    /* Apple Dark Mode Theme */
-    .stApp { background-color: #000000; color: #F5F5F7; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; }
-    .glass-box {
-        background: rgba(28, 28, 30, 0.65);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border-radius: 16px;
-        padding: 20px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        margin-bottom: 12px;
-    }
-    .action-box {
-        background: linear-gradient(145deg, #1C1C1E 0%, #2C2C2E 100%);
-        border-radius: 20px; padding: 25px; border: 1px solid #3A3A3C;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    }
-    .stButton>button {
-        border-radius: 12px; background-color: #1C1C1E; color: white;
-        border: 1px solid #3A3A3C; transition: all 0.2s ease; font-weight: 600;
-    }
-    .stButton>button:hover {
-        border-color: #0A84FF; background-color: #2C2C2E; transform: scale(1.02);
-    }
-    [data-testid="stSidebar"] { background-color: #161617; border-right: 1px solid #2C2C2E; }
-    h1, h2, h3, h4 { letter-spacing: -0.5px; font-weight: 700; }
-    /* Colori Semaforo */
-    .text-green { color: #32D74B; } .text-orange { color: #FF9F0A; } .text-red { color: #FF3B30; } .text-blue { color: #0A84FF; }
+    .stApp { background-color: #000000; color: #F5F5F7; font-family: "SF Pro Display", sans-serif; }
+    .glass-box { background: rgba(28, 28, 30, 0.65); backdrop-filter: blur(10px); border-radius: 16px; padding: 20px; border: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 12px; }
+    .action-box { background: linear-gradient(145deg, #1C1C1E 0%, #2C2C2E 100%); border-radius: 20px; padding: 25px; border: 1px solid #3A3A3C; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    .numpad-btn>button { border-radius: 8px; background-color: #1C1C1E; color: white; border: 1px solid #3A3A3C; height: 50px; font-size: 18px; font-weight: bold; }
+    .numpad-btn>button:hover { border-color: #0A84FF; transform: scale(1.05); }
+    .btn-red>button { border-bottom: 3px solid #FF3B30; }
+    .btn-black>button { border-bottom: 3px solid #8E8E93; }
+    .btn-zero>button { border-bottom: 3px solid #32D74B; }
+    .text-green { color: #32D74B; } .text-orange { color: #FF9F0A; } .text-red { color: #FF3B30; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- COSTANTI DI GIOCO ---
-SEGMENTS = ['1', '2', '5', '10', 'Coin Flip', 'Pachinko', 'Cash Hunt', 'Crazy Time']
-BONUS_LIST = ['Coin Flip', 'Pachinko', 'Cash Hunt', 'Crazy Time']
-EXPECTED_FREQ = {'1': 21/54, '2': 13/54, '5': 7/54, '10': 4/54, 'Coin Flip': 4/54, 'Pachinko': 2/54, 'Cash Hunt': 2/54, 'Crazy Time': 1/54}
-# Stima payout per calcolo Local RTP (Ritorno per Unità scommessa)
-ESTIMATED_PAYOUTS = {'1': 2, '2': 3, '5': 6, '10': 11, 'Coin Flip': 15, 'Pachinko': 25, 'Cash Hunt': 25, 'Crazy Time': 50}
+# --- DATABASE FISICO DELLA RUOTA (EUROPEA) ---
+WHEEL_ORDER = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
+RED_NUMS = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
 
-NEIGHBORS = {
-    '1': ['10', '2', '5', 'Coin Flip'], '2': ['1', '10', 'Crazy Time', '5'],
-    '5': ['1', 'Pachinko', '2', 'Cash Hunt'], '10': ['1', '2', 'Coin Flip', 'Cash Hunt'],
-    'Coin Flip': ['1', '10', '2', '5'], 'Pachinko': ['5', '1', 'Crazy Time'],
-    'Cash Hunt': ['10', '5', '1'], 'Crazy Time': ['1', '5', 'Pachinko']
+# SETTORI FRANCESI
+SECTORS = {
+    'Zero': [12, 35, 3, 26, 0, 32, 15],
+    'Voisins': [22, 18, 29, 7, 28, 12, 35, 3, 26, 0, 32, 15, 19, 4, 21, 2, 25],
+    'Tiers': [27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33],
+    'Orphelins': [1, 20, 14, 31, 9, 17, 34, 6]
 }
-CORRELATION_MAP = {'5': ['Pachinko', 'Cash Hunt'], '10': ['Coin Flip', 'Cash Hunt'], '2': ['Crazy Time', 'Coin Flip'], '1': ['Coin Flip', 'Pachinko']}
 
 # --- INIT STATE ---
-for key in ['history', 'dealer_history']:
+for key in ['history', 'sector_history', 'distances']:
     if key not in st.session_state: st.session_state[key] = []
-for key in ['total_spins', 'dealer_spins']:
+for key in ['total_spins', 'wins', 'losses']:
     if key not in st.session_state: st.session_state[key] = 0
+if 'last_prediction' not in st.session_state: st.session_state['last_prediction'] = None
 
-# --- CORE MATH ENGINE ---
-def is_bonus(o): return o in BONUS_LIST
+# --- FUNZIONI CORE ---
+def get_color(num): return 'Green' if num == 0 else ('Red' if num in RED_NUMS else 'Black')
+def get_dozen(num): return '0' if num == 0 else ('D1' if num <= 12 else ('D2' if num <= 24 else 'D3'))
+def get_sector(num):
+    for sec, nums in SECTORS.items():
+        if num in nums: return sec
+    return 'Unknown'
 
-def get_sfasamento(h, target=None):
-    for i, val in enumerate(h):
-        if target:
-            if val == target: return i
-        elif is_bonus(val): return i
-    return len(h)
+def get_wheel_distance(n1, n2):
+    # Calcola la distanza fisica sul cilindro tra due numeri (0-18 pockets)
+    i1, i2 = WHEEL_ORDER.index(n1), WHEEL_ORDER.index(n2)
+    dist = abs(i1 - i2)
+    return min(dist, 37 - dist) # Prende la via più breve (oraria o antioraria)
+
+def update_tracker(num_uscito):
+    if st.session_state.last_prediction:
+        target_sector = st.session_state.last_prediction.get('sector')
+        if get_sector(num_uscito) == target_sector:
+            st.session_state.wins += 1
+        else:
+            st.session_state.losses += 1
 
 def entropy(data):
     if not data: return 0.0
@@ -76,257 +68,207 @@ def entropy(data):
     probs = [v / len(data) for v in c.values()]
     return -sum(p * math.log2(p) for p in probs if p > 0)
 
-def get_analysis_weighted(h):
-    matrix = pd.DataFrame(0.0, index=SEGMENTS, columns=SEGMENTS)
-    n = len(h)
-    ent_recent = entropy(h[:15])
-    
-    # DECADIMENTO ADATTIVO (Nuova Implementazione)
-    decay_factor = 0.07 # Standard
-    if ent_recent > 2.2: decay_factor = 0.15 # Dealer caotico, dimentica in fretta
-    elif ent_recent < 1.85: decay_factor = 0.03 # Dealer costante, memoria lunga
+def get_markov_sectors(sect_history):
+    # Calcola la matrice di transizione per i settori fisici
+    labels = ['Zero', 'Voisins', 'Tiers', 'Orphelins']
+    matrix = pd.DataFrame(0.0, index=labels, columns=labels)
+    n = len(sect_history)
+    ent = entropy(sect_history[:15])
+    decay = 0.15 if ent > 1.8 else 0.05 # Adattivo
     
     for i in range(n - 1, 0, -1):
-        age = n - 1 - i
-        weight = math.exp(-decay_factor * age)
-        matrix.loc[h[i], h[i - 1]] += weight
-        
-    m_norm = matrix.div(matrix.sum(axis=1).replace(0, 1), axis=0)
-    return m_norm, entropy(h), ent_recent
+        matrix.loc[sect_history[i], sect_history[i - 1]] += math.exp(-decay * (n - 1 - i))
+    return matrix.div(matrix.sum(axis=1).replace(0, 1), axis=0), ent
 
-def get_local_rtp(h):
-    # CALCOLO RTP DELLA TUA SESSIONE
-    if not h: return 100.0
-    total_won = sum(ESTIMATED_PAYOUTS.get(x, 0) for x in h)
-    total_bet = len(h) * 8 # Simulando la copertura di tutti gli 8 spot
-    return (total_won / total_bet) * 100
+def analyze_dealer_signature(distances):
+    if len(distances) < 10: return None, 0
+    c = Counter(distances[:20]) # Analizza gli ultimi 20 lanci
+    most_common, count = c.most_common(1)[0]
+    freq = count / len(distances[:20])
+    return most_common, freq
 
-def get_hot_cold(h, window=20):
-    recent = h[:window] if len(h) >= window else h
-    if not recent: return {}, {}
-    n = len(recent); counts = Counter(recent)
-    hot, cold = {}, {}
-    for seg in SEGMENTS:
-        dev = (counts.get(seg, 0) / n - EXPECTED_FREQ[seg]) / EXPECTED_FREQ[seg]
-        if dev > 0.30: hot[seg] = dev
-        elif dev < -0.30: cold[seg] = dev
-    return hot, cold
-
-def get_chi_square(h, window=40):
-    recent = h[:window] if len(h) >= window else h
-    if len(recent) < 15: return None
-    n = len(recent); counts = Counter(recent)
-    return sum((counts.get(seg, 0) - EXPECTED_FREQ[seg] * n) ** 2 / (EXPECTED_FREQ[seg] * n) for seg in SEGMENTS)
-
-def get_composite_score(h, seg, markov_prob):
-    if not h: return 0.0
-    sfas = get_sfasamento(h, seg)
-    exp_gap = 1 / EXPECTED_FREQ.get(seg, 0.1)
-    sfas_score = min(sfas / exp_gap, 2.0) / 2.0
-    return (0.45 * markov_prob + 0.55 * sfas_score)
-
-def detect_pattern(h, length=3):
-    if len(h) < length * 2 + 1: return None
-    recent = tuple(h[:length])
-    for i in range(length, len(h) - length):
-        if tuple(h[i:i + length]) == recent: return h[i - 1] if i > 0 else None
-    return None
-
-def get_global_confidence(ent_recent, chi2, n_spins):
-    score = 50.0
-    if ent_recent < 1.8: score += 20
-    elif ent_recent >= 2.2: score -= 20
-    if chi2 is not None:
-        if chi2 > 18.48: score += 20
-        elif chi2 > 14.07: score += 10
-    if n_spins < 10: score -= 25
-    return max(0, min(100, int(score)))
-
-def get_bet_sizing(confidence):
-    # BET SIZING DINAMICO (Nuova Implementazione)
-    if confidence >= 80: return "💰 3 UNITÀ (Puntata Piena)"
-    if confidence >= 55: return "💵 2 UNITÀ (Puntata Media)"
-    if confidence >= 35: return "🪙 1 UNITÀ (Copertura Minima)"
-    return "🚫 NO BET (Rischio Eccessivo)"
-
-def get_next_bet(h, markov, last, ent_recent, chi2, local_rtp, confidence):
-    if local_rtp > 130:
-        return ('STOP / ATTESA', None, [], 'RTP Locale Altissimo: Il banco sta strizzando le probabilità.', 'BASSA')
-    if ent_recent > 2.5:
-        return ('SALTA IL GIRO', None, [], 'Motore nel Caos Totale. Impossibile tracciare pattern.', 'BASSA')
-
-    bonus_data = [(b, get_sfasamento(h, b), get_sfasamento(h, b) / (1 / EXPECTED_FREQ[b])) for b in BONUS_LIST]
-    bonus_data.sort(key=lambda x: x[2], reverse=True)
-    top_bonus, top_sfas, top_urgency = bonus_data[0]
-    
-    preds = markov.loc[last].sort_values(ascending=False)
-    markov_fav = preds.index[0] if preds.iloc[0] > 0 else None
-    corr_bonus = CORRELATION_MAP.get(markov_fav, []) if markov_fav else []
-
-    if top_urgency > 2.0 and ent_recent < 2.1:
-        mot = f"{top_bonus} in sfasamento critico ({top_sfas} giri). Motore stabile."
-        return ('ATTACCO DIRETTO BONUS', markov_fav, [top_bonus] + [b for b in corr_bonus if b != top_bonus], mot, 'ALTISSIMA')
-    if local_rtp < 85 and top_urgency > 1.3:
-        mot = f"RTP Locale bassissimo ({local_rtp:.0f}%). Il banco deve pagare. Punta {markov_fav} e settori."
-        return ('ATTACCO SETTORE', markov_fav, corr_bonus, mot, 'ALTA')
-    if top_urgency > 1.5:
-        return ('COPERTURA SELETTIVA', markov_fav, [top_bonus], f"{top_bonus} in pressione. Usa puntate minime.", 'MEDIA')
-    
-    return ('MONITORAGGIO', markov_fav, [], "Nessun segnale di rottura statistica imminente.", 'BASSA')
-
+def get_sfasamento(h, target, mode='dozen'):
+    for i, val in enumerate(h):
+        if mode == 'dozen' and get_dozen(val) == target: return i
+        elif mode == 'sector' and get_sector(val) == target: return i
+    return len(h)
 
 # --- UI: DASHBOARD ---
-st.title(" CT Oracle Pro v4")
+st.title(" Roulette Oracle Pro | Physical Tracker")
 
-t1, t2, t3, t4, t5 = st.columns(5)
-local_rtp_val = get_local_rtp(st.session_state.history)
-t1.metric("Local RTP (Tua Sessione)", f"{local_rtp_val:.1f}%", delta="Sotto Media" if local_rtp_val < 90 else "Sopra Media", delta_color="inverse")
-t2.metric("Giri Totali", st.session_state.total_spins)
-t3.metric("Giri Dealer", st.session_state.dealer_spins)
-t4.metric("Sfas. Bonus Gen.", get_sfasamento(st.session_state.history))
-chi2_val = get_chi_square(st.session_state.history)
-t5.metric("Chi2 Bias", f"{chi2_val:.1f}" if chi2_val else "N/A", delta="BIAS RILEVATO" if chi2_val and chi2_val > 14.07 else "Random", delta_color="off" if chi2_val and chi2_val > 14.07 else "normal")
+# PERFORMANCE TRACKER
+total_preds = st.session_state.wins + st.session_state.losses
+accuracy = (st.session_state.wins / total_preds * 100) if total_preds > 0 else 0
 
-# INPUT TASTIERA
-st.markdown("### ⌨️ Input Rapido")
-cols_btn = st.columns(8)
-for idx, seg in enumerate(SEGMENTS):
-    if cols_btn[idx].button(seg, use_container_width=True):
-        st.session_state.history.insert(0, seg)
-        st.session_state.dealer_history.insert(0, seg)
-        st.session_state.total_spins += 1
-        st.session_state.dealer_spins += 1
-        st.rerun()
+st.markdown('<div class="glass-box" style="padding:10px 20px;">', unsafe_allow_html=True)
+p1, p2, p3, p4 = st.columns(4)
+p1.metric("Precisione Settore", f"{accuracy:.1f}%")
+p2.metric("Vittorie (Win)", st.session_state.wins)
+p3.metric("Errori (Loss)", st.session_state.losses)
+p4.metric("Giri Inseriti", st.session_state.total_spins)
+st.markdown('</div>', unsafe_allow_html=True)
 
-# NASTRO CRONOLOGICO
+# TASTIERA INPUT (Roulette Grid Rapida)
+st.markdown("### ⌨️ Input Ruota")
+st.markdown('<div class="numpad-btn">', unsafe_allow_html=True)
+# Riga 0 isolata
+c0, _ = st.columns([1, 8])
+if c0.button("0", use_container_width=True, key="btn_0"):
+    update_tracker(0)
+    if st.session_state.history:
+        st.session_state.distances.insert(0, get_wheel_distance(st.session_state.history[0], 0))
+    st.session_state.history.insert(0, 0)
+    st.session_state.sector_history.insert(0, get_sector(0))
+    st.session_state.total_spins += 1
+    st.rerun()
+
+# Griglia 1-36 (3 colonne stile tappeto)
+nums = [[1,2,3], [4,5,6], [7,8,9], [10,11,12], [13,14,15], [16,17,18], 
+        [19,20,21], [22,23,24], [25,26,27], [28,29,30], [31,32,33], [34,35,36]]
+
+cols = st.columns(12)
+for i, col_arr in enumerate(nums):
+    with cols[i]:
+        for n in col_arr:
+            color_class = "btn-red" if n in RED_NUMS else "btn-black"
+            st.markdown(f'<div class="{color_class}">', unsafe_allow_html=True)
+            if st.button(str(n), use_container_width=True, key=f"btn_{n}"):
+                update_tracker(n)
+                if st.session_state.history:
+                    st.session_state.distances.insert(0, get_wheel_distance(st.session_state.history[0], n))
+                st.session_state.history.insert(0, n)
+                st.session_state.sector_history.insert(0, get_sector(n))
+                st.session_state.total_spins += 1
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# NASTRO CRONOLOGICO COLORATO
 if st.session_state.history:
     recent = st.session_state.history[:20]
-    st.markdown('<div style="display:flex; overflow-x:auto; padding-bottom:10px;">' + "".join([
-        f'<div style="background:{"#FF3B30" if is_bonus(v) else "#2C2C2E"}; border-radius:8px; padding:6px 14px; margin-right:6px; font-weight:700; color:white; min-width:60px; text-align:center;">{v[:4] if is_bonus(v) else v}</div>' for v in recent
+    st.markdown('<div style="display:flex; overflow-x:auto; padding-top:15px; padding-bottom:10px;">' + "".join([
+        f'<div style="background:{"#32D74B" if v==0 else ("#FF3B30" if v in RED_NUMS else "#2C2C2E")}; border-radius:50%; width:40px; height:40px; display:flex; align-items:center; justify-content:center; margin-right:8px; font-weight:bold; font-size:18px; color:white; border:2px solid rgba(255,255,255,0.2);">{v}</div>' for v in recent
     ]) + '</div>', unsafe_allow_html=True)
 
 st.markdown("---")
 
-# MOTORE PRINCIPALE
-if len(st.session_state.history) > 5:
+# MOTORE DI ANALISI
+if len(st.session_state.history) > 10:
     h = st.session_state.history
-    markov, ent_total, ent_recent = get_analysis_weighted(h)
-    last = h[0]
-    confidence = get_global_confidence(ent_recent, chi2_val, len(h))
+    sh = st.session_state.sector_history
+    last_num = h[0]
+    last_sec = sh[0]
     
-    # ELABORAZIONE DECISIONE
-    azione, target_num, target_bonus_list, motivo, urgenza = get_next_bet(h, markov, last, ent_recent, chi2_val, local_rtp_val, confidence)
+    markov_sec, ent_sec = get_markov_sectors(sh)
+    preds_sec = markov_sec.loc[last_sec].sort_values(ascending=False)
+    fav_sec = preds_sec.index[0] if preds_sec.iloc[0] > 0 else None
+    
+    sig_dist, sig_freq = analyze_dealer_signature(st.session_state.distances)
+    
+    # Gap Analisi Dozzine
+    gap_d1, gap_d2, gap_d3 = get_sfasamento(h, 'D1'), get_sfasamento(h, 'D2'), get_sfasamento(h, 'D3')
+    max_doz_gap = max(gap_d1, gap_d2, gap_d3)
+    urg_doz = 'D1' if gap_d1 == max_doz_gap else ('D2' if gap_d2 == max_doz_gap else 'D3')
 
-    # --- ACTION BOX (DECISORE FINALE) ---
-    box_color = "linear-gradient(145deg, #4A1942 0%, #2A0845 100%)" if urgenza == 'ALTISSIMA' else \
-                "linear-gradient(145deg, #1A472A 0%, #0F2A1A 100%)" if urgenza == 'ALTA' else \
-                "linear-gradient(145deg, #1C1C1E 0%, #2C2C2E 100%)"
+    # ELABORAZIONE AZIONE
+    azione = "MONITORAGGIO"
+    motivo = "Attendere allineamento pattern fisici."
+    unita = "🚫 0 UNITÀ"
     
+    # Trigger 1: Dealer Signature Trovata
+    if sig_freq > 0.25 and sig_dist is not None:
+        target_zone_index = (WHEEL_ORDER.index(last_num) + sig_dist) % 37 # Predice caduta basata su spostamento
+        pred_num_phys = WHEEL_ORDER[target_zone_index]
+        fav_sec = get_sector(pred_num_phys) # Sovrascrive Markov con la Fisica Pura
+        azione = f"🎯 ATTACCO FISICO: {fav_sec.upper()}"
+        motivo = f"Dealer Signature Rilevata: La pallina cade spesso a +{sig_dist} pockets. Copri zona di {pred_num_phys}."
+        unita = "💰 3 UNITÀ (Punta i cavalli nel settore)"
+    
+    # Trigger 2: Markov Convergenza Settori (Se Entropia bassa)
+    elif ent_sec < 1.7 and fav_sec:
+        azione = f"🔮 ATTACCO SETTORE: {fav_sec.upper()}"
+        motivo = f"Motore Fisico Prevedibile (Entropia {ent_sec:.2f}). Markov indica transizione verso {fav_sec}."
+        unita = "💵 2 UNITÀ (Sui numeri del settore)"
+        
+    # Trigger 3: Collasso Dozzina
+    elif max_doz_gap > 11:
+        azione = f"🚨 RECUPERO DOZZINA: {urg_doz}"
+        motivo = f"La Dozzina {urg_doz} è in sfasamento estremo (Manca da {max_doz_gap} giri). Intervento Matematico."
+        unita = "🪙 1 UNITÀ (Copertura in progressione)"
+
+    # Salva predizione
+    if azione != "MONITORAGGIO":
+        st.session_state.last_prediction = {'sector': fav_sec}
+    else:
+        st.session_state.last_prediction = None
+
+    # UI ACTION BOX
+    box_color = "linear-gradient(145deg, #1A472A 0%, #0F2A1A 100%)" if "ATTACCO" in azione else \
+                "linear-gradient(145deg, #4A1942 0%, #2A0845 100%)" if "RECUPERO" in azione else \
+                "linear-gradient(145deg, #1C1C1E 0%, #2C2C2E 100%)"
+                
     st.markdown(f"""
         <div class="action-box" style="background: {box_color};">
-            <h4 style="color:#ffffff99; margin:0; text-transform:uppercase; font-size:12px;">Comando Tattico</h4>
+            <h4 style="color:#ffffff99; margin:0; text-transform:uppercase; font-size:12px;">Comando Tattico Dealer</h4>
             <h2 style="color:white; margin:5px 0 10px 0; font-size:32px;">{azione}</h2>
             <p style="color:#ffffffcc; font-size:16px; margin:0 0 15px 0;">{motivo}</p>
             <div style="display:flex; gap:20px;">
                 <div style="background:rgba(0,0,0,0.3); padding:10px 15px; border-radius:10px;">
-                    <span style="color:#ffffff99; font-size:12px;">Puntata Consigliata</span><br>
-                    <b style="color:#32D74B; font-size:16px;">{get_bet_sizing(confidence)}</b>
-                </div>
-                <div style="background:rgba(0,0,0,0.3); padding:10px 15px; border-radius:10px;">
-                    <span style="color:#ffffff99; font-size:12px;">Confidenza Sistema</span><br>
-                    <b style="color:white; font-size:16px;">{confidence}%</b>
+                    <span style="color:#ffffff99; font-size:12px;">Gestione Bankroll</span><br>
+                    <b style="color:#32D74B; font-size:16px;">{unita}</b>
                 </div>
             </div>
         </div>
     """, unsafe_allow_html=True)
+
+    # PANNELLI DI TELEMETRIA
+    cA, cB, cC = st.columns(3)
     
-    # BLOCCO COPERTURE SPECIFICHE
-    c1, c2 = st.columns(2)
-    with c1:
+    with cA:
         st.markdown('<div class="glass-box">', unsafe_allow_html=True)
-        st.markdown("#### 🎯 Numero da Coprire")
-        if target_num:
-            st.markdown(f"<h1 class='text-green' style='text-align:center;'>{target_num}</h1>", unsafe_allow_html=True)
-            st.caption(f"Vicini fisici: {', '.join(NEIGHBORS.get(target_num, [])[:2])}")
+        st.markdown("#### 🔭 Dealer Signature")
+        if sig_dist is not None:
+            st.metric("Salto Frequente (Pockets)", f"+{sig_dist}")
+            st.progress(float(sig_freq))
+            st.caption(f"Frequenza salto del braccio: {sig_freq:.1%}")
         else:
-            st.info("Nessun numero specifico suggerito.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-    with c2:
-        st.markdown('<div class="glass-box">', unsafe_allow_html=True)
-        st.markdown("#### 🚀 Bonus Prioritari")
-        if target_bonus_list:
-            for tb in target_bonus_list[:2]:
-                s = get_sfasamento(h, tb)
-                exp = round(1 / EXPECTED_FREQ[tb])
-                st.markdown(f"<h3 class='text-orange' style='margin:0;'>{tb} <span style='font-size:14px; color:white;'>(Gap: {s}/{exp})</span></h3>", unsafe_allow_html=True)
-        else:
-            st.info("Nessun bonus in urgenza critica.")
+            st.write("Dati insufficienti o lanciatore caotico.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown("---")
-    
-    # GRIGLIA ANALISI TECNICA (Motore, Trend, Dettagli)
-    colA, colB, colC = st.columns([1, 1, 1.2])
-    
-    with colA:
+    with cB:
         st.markdown('<div class="glass-box">', unsafe_allow_html=True)
-        st.markdown("#### 📡 Telemetria Motore")
-        st.metric("Entropia Attuale", f"{ent_recent:.2f}")
-        
-        # GRAFICO TREND ENTROPIA RECENTE
-        if len(h) >= 15:
-            ent_trend = [entropy(h[i:i+10]) for i in range(10)]
-            ent_trend.reverse()
-            st.caption("Trend Entropia (Ultime 10 rilevazioni)")
-            st.line_chart(pd.DataFrame(ent_trend, columns=["Caos"]), height=100)
-            
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with colB:
-        st.markdown('<div class="glass-box">', unsafe_allow_html=True)
-        st.markdown("#### 🔮 Top 3 Markov")
-        preds = markov.loc[last].sort_values(ascending=False).head(3)
-        for val, prob in preds.items():
+        st.markdown("#### 🌐 Markov (Settori)")
+        for sec, prob in preds_sec.items():
             if prob > 0:
-                sc = get_composite_score(h, val, prob)
-                st.write(f"**{val}** (Score: {sc:.2f})")
+                st.write(f"**{sec}** ({prob:.1%})")
                 st.progress(float(prob))
         st.markdown('</div>', unsafe_allow_html=True)
 
-    with colC:
+    with cC:
         st.markdown('<div class="glass-box">', unsafe_allow_html=True)
-        st.markdown("#### 📊 Dettaglio Sfasamento")
-        for b in BONUS_LIST:
-            s = get_sfasamento(h, b)
-            urg = s / (1 / EXPECTED_FREQ[b])
-            color = "#FF3B30" if urg > 1.8 else "#FF9F0A" if urg > 1.0 else "#32D74B"
-            st.markdown(f"<div style='display:flex; justify-content:space-between; border-bottom:1px solid #3A3A3C; padding:5px 0;'><span style='color:{color}; font-weight:600;'>{b}</span> <span>{s} giri <b style='color:{color}'>({urg:.1f}x)</b></span></div>", unsafe_allow_html=True)
+        st.markdown("#### ⚖️ Legge del Terzo (Gap)")
+        st.write(f"**Dozzina 1:** Manca da {gap_d1}")
+        st.write(f"**Dozzina 2:** Manca da {gap_d2}")
+        st.write(f"**Dozzina 3:** Manca da {gap_d3}")
+        st.caption("Soglia di attacco superata a 11 giri vuoti.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- SIDEBAR (CONTROLLI) ---
-st.sidebar.markdown("## ⚙️ Controlli")
-if st.sidebar.button("⏪ Annulla Ultimo", use_container_width=True):
+# --- SIDEBAR ---
+st.sidebar.markdown("## ⚙️ Controlli Live")
+if st.sidebar.button("⏪ Cancella Errore", use_container_width=True):
     if st.session_state.history:
         st.session_state.history.pop(0)
-        st.session_state.total_spins = max(0, st.session_state.total_spins - 1)
-        if st.session_state.dealer_history:
-            st.session_state.dealer_history.pop(0)
-            st.session_state.dealer_spins = max(0, st.session_state.dealer_spins - 1)
+        st.session_state.sector_history.pop(0)
+        if st.session_state.distances: st.session_state.distances.pop(0)
+        st.session_state.total_spins -= 1
         st.rerun()
 
-if st.sidebar.button("👤 Cambio Dealer", use_container_width=True):
-    st.session_state.dealer_spins = 0
-    st.session_state.dealer_history = []
-    st.sidebar.success("✅ Dealer Azzerato")
+if st.sidebar.button("👤 Cambio Dealer (Reset Fisica)", use_container_width=True):
+    st.session_state.distances = []
+    st.sidebar.success("Fisica azzerata per il nuovo braccio.")
     st.rerun()
 
-if st.sidebar.button("🗑️ Full Reset", use_container_width=True):
-    st.session_state.history = []
-    st.session_state.dealer_history = []
-    st.session_state.total_spins = 0
-    st.session_state.dealer_spins = 0
+if st.sidebar.button("🗑️ Hard Reset", use_container_width=True):
+    for key in ['history', 'sector_history', 'distances']: st.session_state[key] = []
+    for key in ['total_spins', 'wins', 'losses']: st.session_state[key] = 0
     st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.caption(" CT Oracle Pro v4 | Terminale Quantitativo Definitivo")
