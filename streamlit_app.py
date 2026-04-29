@@ -159,4 +159,11 @@ if len(st.session_state.history) > 5:
             common_dist = Counter(st.session_state.distances[:10]).most_common(1)[0]
             st.metric("Salto Dominante", f"+{common_dist[0]}", f"{common_dist[1]*10}% costanza")
 
-# SIDE
+# SIDEBAR
+st.sidebar.header('Controlli Oracle')
+if st.sidebar.button('Cancella Ultimo'):
+    if st.session_state.history: st.session_state.history.pop(0); st.rerun()
+if st.sidebar.button('Cambio Dealer'):
+    st.session_state.dealer_spins = 0; st.session_state.dealer_history = []; st.rerun()
+if st.sidebar.button('Reset Totale'):
+    st.session_state.history = []; st.session_state.total_spins = 0; st.rerun()
